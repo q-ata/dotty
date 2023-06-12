@@ -335,10 +335,6 @@ object Objects:
     def emptyEnv(meth: Symbol)(using Context): Data =
       new LocalEnv(Map.empty, meth, NoEnv)(valsMap = mutable.Map.empty, varsMap = mutable.Map.empty)
 
-    def valValue(x: Symbol)(using data: Data, ctx: Context): Value = data.getVal(x).get
-
-    def varAddr(x: Symbol)(using data: Data, ctx: Context): Heap.Addr = data.getVar(x).get
-
     def getVal(x: Symbol)(using data: Data, ctx: Context): Option[Value] = data.getVal(x)
 
     def getVar(x: Symbol)(using data: Data, ctx: Context): Option[Heap.Addr] = data.getVar(x)
@@ -822,7 +818,7 @@ object Objects:
       if sym.is(Flags.Mutable) then
         // Assume forward reference check is doing a good job
         given Env.Data = env
-        val addr = Env.varAddr(sym)
+        val addr = Env.getVar(sym).get
         if addr.owner == State.currentObject then
           Heap.read(addr)
         else
@@ -834,9 +830,10 @@ object Objects:
         Cold
       else
         given Env.Data = env
-        try
-          // Assume forward reference check is doing a good job
-          val value = Env.valValue(sym)
+        // Assume forward reference check is doing a good job
+        val option = Env.getVal(sym)
+        if option.isDefined then
+          val value = option.get
           if isByNameParam(sym) then
             value match
             case fun: Fun =>
@@ -851,9 +848,10 @@ object Objects:
           else
             value
 
-        catch ex =>
+        else
           report.warning("[Internal error] Not found " + sym.show + "\nenv = " + env.show + ". Calling trace:\n" + Trace.show, Trace.position)
           Bottom
+        end if
 
     case _ =>
       if isByNameParam(sym) then
@@ -875,7 +873,7 @@ object Objects:
     Env.resolveEnv(sym.enclosingMethod, thisV, summon[Env.Data]) match
     case Some(thisV -> env) =>
       given Env.Data = env
-      val addr = Env.varAddr(sym)
+      val addr = Env.getVar(sym).get
       if addr.owner != State.currentObject then
         errorMutateOtherStaticObject(State.currentObject, addr.owner)
       else
@@ -1231,7 +1229,7 @@ object Objects:
    */
   def init(tpl: Template, thisV: Ref, klass: ClassSymbol): Contextual[Value] = log("init " + klass.show, printer, (_: Value).show) {
     val paramsMap = tpl.constr.termParamss.flatten.map { vdef =>
-      vdef.name -> Env.valValue(vdef.symbol)
+      vdef.name -> Env.getVal(vdef.symbol).get
     }.toMap
 
     // init param fields
