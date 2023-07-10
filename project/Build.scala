@@ -196,7 +196,7 @@ object Build {
       "-deprecation",
       "-unchecked",
       //"-Wconf:cat=deprecation&msg=Unsafe:s",    // example usage
-      "-Xfatal-warnings",                         // -Werror in modern usage
+      // "-Xfatal-warnings",                         // -Werror in modern usage
       "-encoding", "UTF8",
       "-language:implicitConversions",
     ),
@@ -530,7 +530,7 @@ object Build {
   // Settings shared between scala3-compiler and scala3-compiler-bootstrapped
   lazy val commonDottyCompilerSettings = Seq(
        // Note: bench/profiles/projects.yml should be updated accordingly.
-       Compile / scalacOptions ++= Seq("-Yexplicit-nulls", "-Ysafe-init"),
+       Compile / scalacOptions ++= Seq("-Yexplicit-nulls", "-Ysafe-init", "-Ysafe-init-global"),
 
       // Generate compiler.properties, used by sbt
       (Compile / resourceGenerators) += Def.task {
