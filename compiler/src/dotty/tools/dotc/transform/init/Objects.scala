@@ -596,10 +596,10 @@ class Objects(using Context @constructorOnly):
     def installHandler(try_ : Try)(using data: Data): Unit =
       data.tries.addOne(try_)
 
-    def popHandler(try_ : Try)(using data: Data): List[Value] =
+    def popHandler(try_ : Try)(using data: Data): Value =
       val expectedTry = data.tries.remove(data.tries.size - 1)
       assert(expectedTry == try_, "Mismatch in try/catch handlers, expect = " + expectedTry.show + ", found = " + try_)
-      data.throws.toList
+      data.throws.join
 
     def handle(thrown: Value)(using data: Data, trace: Trace, ctx: Context): Unit =
       data.throws.addOne(thrown)
@@ -1200,14 +1200,14 @@ class Objects(using Context @constructorOnly):
             // local methods are not a member, but we can reuse the method `call`
             withTrace(trace2) { call(thisValue2, id.symbol, args, receiver = NoType, superType = NoType, needResolve = false) }
           case TermRef(prefix, _) =>
-            if id.name == nme.throw_ then
-              assert(args.size == 1, "Expected only one thrown value, instead got " + args.size)
-              val thrown = args.head.value
-              Throws.handle(thrown)
-
             val receiver = withTrace(trace2) { evalType(prefix, thisV, klass) }
             if id.symbol.isConstructor then
               withTrace(trace2) { callConstructor(receiver, id.symbol, args) }
+            else if id.name == nme.throw_ then
+              assert(args.size == 1, "Expected only one thrown value, instead got " + args.size)
+              val thrown = args.head.value
+              Throws.handle(thrown)
+              Bottom
             else
               withTrace(trace2) { call(receiver, id.symbol, args, receiver = prefix, superType = NoType) }
 
@@ -1298,7 +1298,7 @@ class Objects(using Context @constructorOnly):
 
         val res1 = eval(block, thisV, klass)
         val scrutinees = Throws.popHandler(try_)
-        val res2 = scrutinees.map(patternMatch(_, cases, thisV, klass)).join
+        val res2 = patternMatch(scrutinees, cases, thisV, klass)
 
         if !finalizer.isEmpty then
           eval(finalizer, thisV, klass)
