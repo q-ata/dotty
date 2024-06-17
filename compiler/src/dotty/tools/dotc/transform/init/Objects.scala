@@ -271,6 +271,7 @@ class Objects(using Context @constructorOnly):
         given Env.Data = Env.emptyEnv(tpl.constr.symbol)
         given Heap.MutableData = Heap.empty()
         given returns: Returns.Data = Returns.empty()
+        given throws: Throws.Data = Throws.empty()
         given regions: Regions.Data = Regions.empty // explicit name to avoid naming conflict
 
         val obj = ObjectRef(classSym)
@@ -582,7 +583,28 @@ class Objects(using Context @constructorOnly):
         case None =>
           report.warning("[Internal error] Unhandled return for method " + meth + " in " + meth.owner.show + ". Trace:\n" + Trace.show, Trace.position)
 
-  type Contextual[T] = (Context, State.Data, Env.Data, Cache.Data, Heap.MutableData, Regions.Data, Returns.Data, Trace) ?=> T
+
+  /**
+   * For keeping track of throws.
+   */
+  object Throws:
+    private class ThrowData(val tries : mutable.ArrayBuffer[Try], val throws: mutable.ArrayBuffer[Value])
+    opaque type Data = ThrowData
+
+    def empty(): Data = ThrowData(mutable.ArrayBuffer(), mutable.ArrayBuffer())
+
+    def installHandler(try_ : Try)(using data: Data): Unit =
+      data.tries.addOne(try_)
+
+    def popHandler(try_ : Try)(using data: Data): List[Value] =
+      val expectedTry = data.tries.remove(data.tries.size - 1)
+      assert(expectedTry == try_, "Mismatch in try/catch handlers, expect = " + expectedTry.show + ", found = " + try_)
+      data.throws.toList
+
+    def handle(thrown: Value)(using data: Data, trace: Trace, ctx: Context): Unit =
+      data.throws.addOne(thrown)
+
+  type Contextual[T] = (Context, State.Data, Env.Data, Cache.Data, Heap.MutableData, Regions.Data, Returns.Data, Throws.Data, Trace) ?=> T
 
   // --------------------------- domain operations -----------------------------
 
@@ -1178,6 +1200,11 @@ class Objects(using Context @constructorOnly):
             // local methods are not a member, but we can reuse the method `call`
             withTrace(trace2) { call(thisValue2, id.symbol, args, receiver = NoType, superType = NoType, needResolve = false) }
           case TermRef(prefix, _) =>
+            if id.name == nme.throw_ then
+              assert(args.size == 1, "Expected only one thrown value, instead got " + args.size)
+              val thrown = args.head.value
+              Throws.handle(thrown)
+
             val receiver = withTrace(trace2) { evalType(prefix, thisV, klass) }
             if id.symbol.isConstructor then
               withTrace(trace2) { callConstructor(receiver, id.symbol, args) }
@@ -1266,11 +1293,17 @@ class Objects(using Context @constructorOnly):
       case Labeled(_, expr) =>
         eval(expr, thisV, klass)
 
-      case Try(block, cases, finalizer) =>
-        val res = evalExprs(block :: cases.map(_.body), thisV, klass).join
+      case try_ @ Try(block, cases, finalizer) =>
+        Throws.installHandler(try_)
+
+        val res1 = eval(block, thisV, klass)
+        val scrutinees = Throws.popHandler(try_)
+        val res2 = scrutinees.map(patternMatch(_, cases, thisV, klass)).join
+
         if !finalizer.isEmpty then
           eval(finalizer, thisV, klass)
-        res
+
+        res1.join(res2)
 
       case SeqLiteral(elems, elemtpt) =>
         evalExprs(elems, thisV, klass).join
